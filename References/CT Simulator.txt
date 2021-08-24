@@ -1,0 +1,202 @@
+CT Simulator
+============
+
+Project List
+============
+	Update to ASTRA (IN PROGRESS)
+	===============
+	Update the simulator to use the ASTRA package to support 2D/3D projection and 
+	reconstruction on CPU and GPU
+	
+	- Comparing our sinogram to ASTRA's sinogram, there is a 90 degree difference
+		in the angle and a flip. Therefore, to line up the sinograms if generated
+		for angles 1:360 one must do: circshift(fliplr(my_sinogram), -90)
+		
+	NOTE from ASTRA Documentation:
+	"In all 3D geometries, the coordinate system is defined around the 
+	reconstruction volume. The center of the reconstruction volume is 
+	the origin, and the sides of the voxels in the volume have length 1."
+	- The accepted volume geometry does not have the option of inputting the
+		extents of the volume (only the pixel counts)
+
+Learn the CONRAD simulation package and see about using for our purposes.
+Seems to be a complete package on its own. Not sure if we could integrate
+it into our own simulations...
+
+
+Brainstorming Ideas (Objects)
+===================
+
+	Have the ability to load named objects that are saved in a database
+	or to create new objects in the run script.
+	Object types: phantom, beam spectrum, forward_projector?, detector, back_projector?, recon_geometry?
+
+	Imaged Object
+	=============
+	At this point, there are two kinds of inputs:
+	1) images of the phantom constructed with pixels
+		- the value of each pixel corresponds to a material
+		- a PixelatedPhantom object should contain all necessary information
+			such as the pixel data, pixel size, material correspondence
+	2) analytic description of the phantom in terms of ellipses
+		- this can be converted to the former type using my function
+
+	Forward Projector
+	=================
+	For pixelated images, there are multiple algorithms but are essentially
+		the same (at least the API's are with only minor differences in options)
+	
+	For analytic ellipse phantoms, we only have the analyticProjector
+		
+
+	System Geometry
+	===============
+	Information about the source and detector geometry:
+		source to object distance
+		object to detector distance
+		parallel vs fanbeam projections
+		2D vs 3D projections (parallel vs conebeam (vs helical ???))
+		straight vs curved detector (X probably will just assume a straight detector for now)
+		
+	Information about the detector:
+		detector pixel size (length and area)
+		detector thickness for quantum detection efficiency
+
+Object Oriented Design
+======================
+Below are the different objects that interact to form the system and their major
+responsibilities.
+
+% Basic Object Descriptions
+
+Phantom -- a representation of a physical object that we will project
+rays through in the simulation. 
+Properties: 
+      volume_geometry = (pixel_size, pixel_counts)
+Methods: 
+      generateAttenuationImage(energy)
+      show(energy)
+
+ForwardProjector -- encapsulation and abstraction of the underlying
+projection method.
+Properties:
+      method
+      phantom_geometry
+      projection_geometry
+Methods:
+      setPhantom?
+      setPhantomGeometry(phantom.volume_geometry)
+      setProjectionGeometry(projection_geometry)
+      projectPhantom(phantom, energies)
+
+	X Ray Source
+	============
+	Encapsulates the generation of the x ray spectrum including the filtering.
+	Properties:
+		  kVpeak
+		  exposure or mAs?
+		  filter_list (has the material and thickness)
+	Methods:
+		  generateSpectrum()
+		  getEnergies() - returns only energies with non-zero counts
+
+	BackProjector 
+	=============
+	Base class for the back projection methods
+	
+	Properties:
+		  method
+		  projection_geometry
+		  phantom?
+	Methods:
+		  reconstruct(sinogram, projection_geometry?)
+
+
+	Input Geometry (Generated entirely from the Phantom object)
+	==============
+	Size of the input raster image in pixels
+	Physical extents of the input image (Only valid for 2D!? Care required for 3D)
+	
+	Reconstruction Geometry (essentially the same as the input geometry)
+	=======================
+	Size of the output raster image in pixels
+	Physical extents of the output image
+	
+	Projection Geometry
+	===================
+	Beam type -- parallel vs fanbeam (strip for now, line and vec can come later)
+	detector pixel size
+	detector pixel count
+	projection angles
+	if fanbeam:
+		source to object distance
+		object to detector distance
+	
+Use Case
+========
+1) Choose the name of the phantom object to simulate
+	- both pixelated and analytic phantoms should be selectable by a single name
+	- 2D vs 3D simulation will be determined by the phantom object itself
+2) Define parameters for the x-ray spectrum for each projection
+	- energy, exposure (mAs?), filtration (material and thickness)
+3) Create the CT system geometry structures
+
+3) Choose a forward projection and back projection methods
+
+4) Run the simulation
+	
+
+General description of the implemented procedures:
+	1) Evaluate import parameters and create the necessary objects:
+		spectrum, phantom, forward_projector (& detector), back_projector, recon_geometry
+		- will require much input checking to make sure that everything works
+	2) Use the phantom and forward projector to generate the ut sinogram
+		- this is done for each unit energy in the generated XRaySpectrum
+		- potentially compute individual material sinogram array object first
+			* is this a different projector or a different phantom!?
+	3) Use input spectrum, simulation switches, and detector(CI vs PC) to compute the realistic
+		count sinogram and subsequently convert it back to ut sinogram
+	4) Use real sinogram, back_projector, and recon_geometry to get the reconstruction
+		- optionally rescale the units into Hounsfield numbers!?
+	5) Show results and save outputs
+	
+	This general procedure should be relatively agnostic to the actual parameters of the simulation
+	so that the same structure will hold for all of the underlying methods
+
+Minimal Use Case
+================
+Here we consider the minimal number of inputs necessary to do a CT simulation.
+1) A fully defined phantom object
+2) The geometry of the imaging system, i.e. projection geometry
+	- Needed: fan vs parallel, and if fan: SOD ODD
+			Angles, detector pixel size, number of detector pixels
+3) A fully defined X Ray Source object
+4) The pixel size of the reconstruction geometry
+?) Potentially the detector type and definition (charge integrating or photon counting)
+	- Though we can probably assume a charge integrating detector as the default.
+	
+Forward projection can be created just from the projection geometry and the phantom, but
+also needs information about the detector . . .
+	
+
+	
+Improvements
+=========================
+Compute material and thickness sinogram once and then convert to mu*t at each energy from there
+instead of recomputing the sinogram for each energy bin. This result can be saved in a .mat file
+and will only need to be computed once for each phantom (per detector configuration?)
+	Could be computed on an oversampled detector and then averaged for a shorter one?
+
+Test ROI CT where the detector does not cover the whole object but data is just collected
+in an ROI around the center of the phantom. Allows for large material areas to more accurately
+simulate the noise. ( Upon further consideration, I don't think this will work. It is possible
+to reconstruct to a smaller size, but the projection data still needs to be there.
+
+Incorporate more realistic filtering in the FBP algorithm
+
+Ensure that the ray tracing algorithm works?
+
+Get functionality of Fessler's forward projection algorithms integrated into the script?
+
+Push to 3 dimensions with an alternative package such as RTK
+	
